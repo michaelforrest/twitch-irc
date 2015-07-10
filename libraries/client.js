@@ -145,6 +145,9 @@ client.prototype._handleMessage = function(message) {
                 self.socket.resetRetry();
 
                 self.socket.crlfWrite('CAP REQ :twitch.tv/tags twitch.tv/commands');
+                if (self.listeners('join').length >= 1 || self.listeners('part').length >= 1) {
+                    self.socket.crlfWrite('CAP REQ :twitch.tv/membership');
+                }
 
                 if (self.twitchClient >= 1) { self.socket.crlfWrite('TWITCHCLIENT ' + self.twitchClient); }
                 else { self.socket.crlfWrite('TWITCHCLIENT 4'); }
@@ -424,19 +427,19 @@ client.prototype._handleMessage = function(message) {
                     if (string(message.params[1]).startsWith('\u0001ACTION')) {
                         self.logger.event('action');
                         self.logger.action('[' + message.params[0] + '] ' + message.prefix.nick + ': ' + string(message.params[1]).between('\u0001ACTION ', '\u0001').s);
-                        self.emit('action', message.params[0], data, string(message.params[1]).between('\u0001ACTION ', '\u0001').s);
+                        self.emit('action', message.params[0], data, string(message.params[1]).between('\u0001ACTION ', '\u0001').s, false);
                     }
                     // Second kind of action message..
                     else if (string(message.params[1]).startsWith(' \x01ACTION')) {
                         self.logger.event('action');
                         self.logger.action('[' + message.params[0] + '] ' + message.prefix.nick + ': ' + string(message.params[1]).between(' \x01ACTION ', '\x01').s);
-                        self.emit('action', message.params[0], data, string(message.params[1]).between(' \x01ACTION ', '\x01').s);
+                        self.emit('action', message.params[0], data, string(message.params[1]).between(' \x01ACTION ', '\x01').s, false);
                     }
                     // Regular chat message..
                     else {
                         self.logger.event('chat');
                         self.logger.chat('[' + message.params[0] + '] ' + message.prefix.nick + ': ' + message.params[1]);
-                        self.emit('chat', message.params[0], data, message.params[1]);
+                        self.emit('chat', message.params[0], data, message.params[1], false);
                     }
                 });
                 break;
@@ -511,6 +514,9 @@ client.prototype._fastReconnectMessage = function(message) {
                 self.socket.resetRetry();
 
                 self.socket.crlfWrite('CAP REQ :twitch.tv/tags twitch.tv/commands');
+                if (self.listeners('join').length >= 1 || self.listeners('part').length >= 1) {
+                    self.socket.crlfWrite('CAP REQ :twitch.tv/membership');
+                }
 
                 if (self.twitchClient >= 1) { self.socket.crlfWrite('TWITCHCLIENT ' + self.twitchClient) }
                 else { self.socket.crlfWrite('TWITCHCLIENT 4'); }
@@ -584,6 +590,10 @@ client.prototype.connect = function() {
             var nickname = identity.username || 'justinfan' + Math.floor((Math.random() * 80000) + 1000);
             var password = identity.password || 'SCHMOOPIIE';
 
+            if (password !== 'SCHMOOPIIE' && password.indexOf('oauth:') < 0) {
+                password = 'oauth:' + password;
+            }
+
             self.logger.event('logon');
             self.emit('logon');
 
@@ -615,6 +625,10 @@ client.prototype.fastReconnect = function() {
             var identity = self.options.identity || {};
             var nickname = identity.username || 'justinfan' + Math.floor((Math.random() * 80000) + 1000);
             var password = identity.password || 'SCHMOOPIIE';
+
+            if (password !== 'SCHMOOPIIE' && password.indexOf('oauth:') < 0) {
+                password = 'oauth:' + password;
+            }
 
             self.logger.event('logon');
             self.emit('logon');
@@ -666,7 +680,7 @@ client.prototype.action = function(channel, message) {
             self.logger.action('[' + utils.addHash(channel).toLowerCase() + '] ' + self.myself + ': ' + message);
         }
         if (self.emitSelf && self.selfData[utils.addHash(channel).toLowerCase()]) {
-            self.emit('action', utils.addHash(channel).toLowerCase(), self.selfData[utils.addHash(channel).toLowerCase()], message);
+            self.emit('action', utils.addHash(channel).toLowerCase(), self.selfData[utils.addHash(channel).toLowerCase()], message, true);
         }
         deferred.resolve(true);
     } else { deferred.resolve(false); }
@@ -763,45 +777,6 @@ client.prototype.join = function(channel) {
     // Socket isn't null and channel hasn't been joined yet..
     if (self.socket !== null && self.currentChannels.indexOf(utils.remHash(channel).toLowerCase()) === -1) {
         self.socket.crlfWrite('JOIN ' + utils.addHash(channel).toLowerCase());
-        // Do not make requests to the Twitch API if the application isn't even listening for the hosting event.
-        if (self.listeners('hosting').length >= 1) {
-            async.series([
-                    // Get the channel ID..
-                    function (callback) {
-                        request('https://api.twitch.tv/kraken/channels/' + utils.remHash(channel).toLowerCase(), function (err, res, body) {
-                            if (!err && res.statusCode == 200) {
-                                callback(null, JSON.parse(body)['_id'] || '');
-                            } else {
-                                callback('TWITCH_API_DOWN', null);
-                            }
-                        });
-                    },
-                    // Get the chatters count..
-                    function (callback) {
-                        request('https://tmi.twitch.tv/group/user/' + utils.remHash(channel).toLowerCase() + '/chatters', function (err, res, body) {
-                            if (!err && res.statusCode == 200) {
-                                callback(null, JSON.parse(body)['chatter_count']);
-                            } else {
-                                callback('TWITCH_API_DOWN', null);
-                            }
-                        });
-                    }],
-                // Check if the channel is hosting another channel and emit the event..
-                function (err, results) {
-                    if (!err) {
-                        request('http://tmi.twitch.tv/hosts?include_logins=1&host=' + results[0], function (err, res, body) {
-                            if (!err && res.statusCode == 200) {
-                                var target = JSON.parse(body)['hosts'][0]['target_login'] || '';
-                                if (target !== '') {
-                                    self.logger.event('hosting');
-                                    self.emit('hosting', utils.remHash(channel).toLowerCase(), target, results[1]);
-                                }
-                            }
-                        });
-                    }
-                }
-            );
-        }
         deferred.resolve(true);
     } else { deferred.resolve(false); }
 
@@ -922,7 +897,7 @@ client.prototype.say = function(channel, message) {
                 self.logger.chat('[' + utils.addHash(channel).toLowerCase() + '] ' + self.myself + ': ' + message);
             }
             if (self.emitSelf && self.selfData[utils.addHash(channel).toLowerCase()]) {
-                self.emit('chat', utils.addHash(channel).toLowerCase(), self.selfData[utils.addHash(channel).toLowerCase()], message);
+                self.emit('chat', utils.addHash(channel).toLowerCase(), self.selfData[utils.addHash(channel).toLowerCase()], message, true);
             }
             deferred.resolve(true);
         } else {
