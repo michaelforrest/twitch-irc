@@ -208,7 +208,9 @@ client.prototype._handleMessage = function(message) {
             /* Received reconnection request from Twitch */
             case 'RECONNECT':
                 self.logger.dev('Received reconnection request from Twitch.');
-                self.fastReconnect();
+                // self.fastReconnect();
+                self.disconnect()
+                self.connect()
                 break;
 
             /* CLEARCHAT sent by the server */
@@ -468,7 +470,7 @@ function _handleTags(username, tags, cb) {
 
     if (tags['subscriber'] === '1') { self.userData.special.push('subscriber'); }
     if (tags['turbo'] === '1') { self.userData.special.push('turbo'); }
-    if (typeof tags['user_type'] === 'string') { self.userData.special.push(tags['user_type']); }
+    if (typeof tags['user-type'] === 'string') { self.userData.special.push(tags['user-type']); }
 
     if (typeof cb == "function") {
         return cb(self.userData);
@@ -502,7 +504,7 @@ client.prototype._fastReconnectMessage = function(message) {
     }
 
     // Handling messages from tmi.twitch.tv
-    else if (message.prefix === 'tmi.twitch.tv') {
+    else if (message.prefix.isServer) {
         switch(message.command) {
             /* Received MOTD from server, it means that we are connected */
             case '372':
